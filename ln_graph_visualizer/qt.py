@@ -742,7 +742,7 @@ class Plugin(BasePlugin):
         dialog = GraphDialog(network.channel_db, own_pubkey, parent=window)
         self._dialogs[win_id] = dialog
         dialog.finished.connect(lambda _=None, wid=win_id: self._dialogs.pop(wid, None))
-        dialog.show()
+        dialog.showMaximized()
 
     @hook
     def on_close_window(self, window: 'ElectrumWindow'):

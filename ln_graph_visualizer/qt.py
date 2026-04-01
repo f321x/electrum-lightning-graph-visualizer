@@ -16,22 +16,29 @@ from electrum.util import format_time
 from electrum.lnutil import LnFeatures
 
 from .graph_data import (
-    GraphNode, GraphEdge, extract_neighborhood,
+    GraphNode, GraphEdge, extract_neighborhood, extract_path_subgraph,
     get_node_display_name,
 )
 from .graph_layout import LayoutWorker
 from .graph_scene import GraphView, PATH_COLORS
 from .pathfinding import (
-    find_paths_and_extract, compute_path_summary,
+    find_k_paths, find_paths_and_extract, compute_path_summary,
     parse_invoice_for_routing, InvoiceRoutingContext,
 )
+from .ab_ui import ABTestPanel
 
 PATH_COLOR_NAMES = ['green', 'gold', 'orange', 'red']
 assert len(PATH_COLOR_NAMES) == len(PATH_COLORS)
 
+MODE_NEIGHBORHOOD = 0
+MODE_PATH_VIEW = 1
+MODE_AB_TEST = 2
+
 if TYPE_CHECKING:
     from electrum.gui.qt.main_window import ElectrumWindow
     from electrum.channel_db import ChannelDB
+    from electrum.lnworker import LNWallet
+    from electrum.simple_config import SimpleConfig
 
 _logger = get_logger(__name__)
 
@@ -75,9 +82,19 @@ class PathWorker(QThread):
 
     def run(self):
         try:
-            results, path_sub, ctx_sub = find_paths_and_extract(
+            results = find_k_paths(
                 self.channel_db, self.source, self.dest,
-                self.amount_msat, self.k)
+                self.amount_msat, self.k,
+            )
+            if results:
+                paths = [r[0] for r in results]
+                ctx_nodes, ctx_edges, path_nodes, path_edges = extract_path_subgraph(
+                    self.channel_db, paths, context_hops=1)
+                path_sub = (path_nodes, path_edges)
+                ctx_sub = (ctx_nodes, ctx_edges)
+            else:
+                path_sub = ({}, {})
+                ctx_sub = ({}, {})
             self.finished.emit(results, path_sub, ctx_sub)
         except Exception as e:
             _logger.error(f"PathWorker error: {e}", exc_info=True)
@@ -142,13 +159,22 @@ class InvoicePathWorker(QThread):
             self.error.emit(str(e))
 
 
-class GraphDialog(QDialog):
+class PluginDialog(QDialog):
 
-    def __init__(self, channel_db: 'ChannelDB', own_pubkey: Optional[bytes], parent=None, lnworker=None):
+    def __init__(
+        self,
+        channel_db: 'ChannelDB',
+        own_pubkey: Optional[bytes],
+        parent=None,
+        *,
+        lnworker: Optional['LNWallet'] = None,
+        config: Optional['SimpleConfig'] = None,
+    ):
         super().__init__(parent)
         self.channel_db = channel_db
         self.own_pubkey = own_pubkey
         self.lnworker = lnworker
+        self._config = config
 
         self.setWindowTitle(_('LN Graph Visualizer'))
         self.setMinimumSize(1000, 700)
@@ -193,7 +219,7 @@ class GraphDialog(QDialog):
         toolbar = QHBoxLayout()
         toolbar.addWidget(QLabel(_('Mode:')))
         self.mode_combo = QComboBox()
-        self.mode_combo.addItems([_('Neighborhood'), _('Path View')])
+        self.mode_combo.addItems([_('Neighborhood'), _('Path View'), _('A/B Test')])
         toolbar.addWidget(self.mode_combo)
         toolbar.addSpacing(16)
 
@@ -280,6 +306,13 @@ class GraphDialog(QDialog):
 
         main_layout.addWidget(self.path_tabs)
 
+        # --- A/B test panel (hidden by default) ---
+        self.ab_panel = ABTestPanel(
+            self.channel_db, self.own_pubkey, self.lnworker, self._config, parent=self,
+        )
+        self.ab_panel.setVisible(False)
+        main_layout.addWidget(self.ab_panel)
+
         # --- main area: graph + info panel ---
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
@@ -340,6 +373,7 @@ class GraphDialog(QDialog):
         self.clear_paths_btn.clicked.connect(self._on_clear_paths)
         self.fit_btn.clicked.connect(self.graph_view.fit_view)
         self.relayout_btn.clicked.connect(self._on_relayout)
+        self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
 
         self.search_btn.clicked.connect(self._on_search)
         self.search_input.returnPressed.connect(self._on_search)
@@ -353,6 +387,10 @@ class GraphDialog(QDialog):
         self.graph_view.edge_clicked.connect(self._on_edge_clicked)
         self.graph_view.node_double_clicked.connect(self._on_node_double_clicked)
         self.graph_view.node_context_menu.connect(self._on_node_context_menu)
+
+    def _on_mode_changed(self, index):
+        self.path_tabs.setVisible(index != MODE_AB_TEST)
+        self.ab_panel.setVisible(index == MODE_AB_TEST)
 
     # --- actions ---
 
@@ -498,6 +536,7 @@ class GraphDialog(QDialog):
         self._data_worker.start()
 
     def _on_expand_loaded(self, center_node_id, nodes, edges):
+        self._data_worker = None
         if not nodes:
             self._update_status()
             return
@@ -567,7 +606,7 @@ class GraphDialog(QDialog):
         self._current_routes = [r[1] for r in results]
 
         # switch to path view mode if selected
-        if self.mode_combo.currentIndex() == 1:
+        if self.mode_combo.currentIndex() == MODE_PATH_VIEW:
             # path view mode — rebuild graph with path subgraph
             path_nodes, path_edges = ctx_sub
             self._nodes = path_nodes
@@ -833,6 +872,7 @@ class GraphDialog(QDialog):
         self.status_label.setText(' | '.join(parts))
 
     def closeEvent(self, event):
+        self.ab_panel.stop_worker()
         for worker in (self._layout_worker, self._data_worker, self._path_worker,
                        self._search_worker, self._invoice_worker):
             self._stop_worker(worker)
@@ -843,7 +883,7 @@ class Plugin(BasePlugin):
 
     def __init__(self, parent, config, name):
         BasePlugin.__init__(self, parent, config, name)
-        self._dialogs: Dict[int, GraphDialog] = {}
+        self._dialogs: Dict[int, PluginDialog] = {}
 
     @hook
     def init_menubar(self, window: 'ElectrumWindow'):
@@ -878,7 +918,10 @@ class Plugin(BasePlugin):
             except Exception:
                 pass
 
-        dialog = GraphDialog(network.channel_db, own_pubkey, parent=window, lnworker=lnworker)
+        dialog = PluginDialog(
+            network.channel_db, own_pubkey, parent=window,
+            lnworker=lnworker, config=self.config,
+        )
         self._dialogs[win_id] = dialog
         dialog.finished.connect(lambda _=None, wid=win_id: self._dialogs.pop(wid, None))
         dialog.showMaximized()

@@ -9,11 +9,14 @@ Tools > LN Graph Visualizer (requires `LIGHTNING_USE_GOSSIP` enabled and synced 
 ## Architecture
 
 ```
-qt.py           Plugin class + GraphDialog + QThread workers
+qt.py           Plugin class + PluginDialog + QThread workers
 graph_data.py   Data extraction from channel_db into plain dataclasses
 graph_layout.py Fruchterman-Reingold force-directed layout (pure Python)
 graph_scene.py  QGraphicsView/Scene, NodeItem, EdgeItem rendering
 pathfinding.py  K-shortest paths via blacklist iteration
+ab_testing.py   A/B test data model, async probe function, JSON persistence
+ab_worker.py    ProbeWorker QThread bridging Qt→asyncio for probing
+ab_ui.py        ABTestPanel widget + ComparisonDialog
 ```
 
 ### Threading Model
@@ -23,6 +26,8 @@ All heavy work runs in QThread workers to keep the GUI responsive:
 - **LayoutWorker** — force-directed layout iterations (emits progressive updates every 10 iterations)
 - **PathWorker** — pathfinding + path subgraph extraction
 - **SearchWorker** — alias/pubkey search across full channel_db
+
+- **ProbeWorker** — A/B test probing via `asyncio.run_coroutine_threadsafe` to bridge Qt→asyncio
 
 Workers are stopped via `_stop_worker()` before starting a new one of the same type. Scene updates happen on the GUI thread via Qt signals.
 
@@ -61,3 +66,7 @@ Workers are stopped via `_stop_worker()` before starting a new one of the same t
 - `update_positions()` temporarily disables `ItemSendsGeometryChanges` during batch moves to avoid O(n*m) edge updates, then updates all edges once at the end.
 - Layout positions are stored per-node as `Dict[bytes, Tuple[float, float]]`. When expanding a node's neighborhood, existing positions are passed to the new layout as pinned anchors.
 - `_stop_worker()` handles the full lifecycle: disconnect signals, stop, quit, wait, deleteLater. Always call before reassigning a worker reference.
+
+## A/B Testing
+
+The Mode dropdown has an "A/B Test" option that shows the `ABTestPanel`. Probing sends payments with random invalid `payment_hash` via `lnworker.pay_to_node(attempts=1)`. `INCORRECT_OR_UNKNOWN_PAYMENT_DETAILS` from the destination = probe success; other onion errors = probe failure. Results are persisted as JSON in `{electrum_path}/ln_ab_tests/`. The `ComparisonDialog` loads two experiments and shows side-by-side stats with deltas. Target sets from previous experiments can be replayed via "Load Targets from Selected".

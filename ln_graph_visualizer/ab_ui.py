@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QWidget,
     QTextEdit, QLineEdit, QComboBox, QSpinBox, QGroupBox,
     QProgressBar, QFormLayout, QDialog, QDialogButtonBox,
-    QApplication,
+    QApplication, QCheckBox,
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
@@ -113,6 +113,10 @@ class ABTestPanel(QWidget):
         timeout_label = QLabel(_('Timeout:'))
         timeout_label.setToolTip(_('Delay in milliseconds between consecutive probes. Prevents overwhelming the local node and the network.'))
         form.addRow(timeout_label, self.timeout_spin)
+
+        self.mpp_checkbox = QCheckBox(_('Enable MPP (multi-part payments)'))
+        self.mpp_checkbox.setToolTip(_('Allow the payment to be split into multiple parts. When disabled, probes try to send the full amount as a single htlc.'))
+        form.addRow('', self.mpp_checkbox)
 
         btn_layout = QHBoxLayout()
         self.run_btn = QPushButton(_('Run Experiment'))
@@ -275,6 +279,7 @@ class ABTestPanel(QWidget):
             amount_msat=amount_msat,
             attempts_per_node=self.attempts_spin.value(),
             timeout_between_ms=self.timeout_spin.value(),
+            enable_mpp=self.mpp_checkbox.isChecked(),
         )
         self._probe_worker.probe_completed.connect(self._on_probe_completed)
         self._probe_worker.progress_updated.connect(self._on_progress_updated)
@@ -406,6 +411,7 @@ class ABTestPanel(QWidget):
         self.amount_input.setText(str(run.config.amount_msat // 1000))
         self.attempts_spin.setValue(run.config.attempts_per_node)
         self.timeout_spin.setValue(run.config.timeout_between_ms)
+        self.mpp_checkbox.setChecked(run.config.enable_mpp)
         self.progress_label.setText(
             _('Loaded {} target(s) and parameters from "{}"').format(len(pubkeys), run.label))
 
@@ -475,6 +481,7 @@ class ComparisonDialog(QDialog):
             form.addRow(_('Targets:'), QLabel(str(len(run.config.target_pubkeys_hex))))
             form.addRow(_('Total probes:'), QLabel(str(len(run.results))))
             form.addRow(_('Amount:'), QLabel(f'{run.config.amount_msat // 1000} sat'))
+            form.addRow(_('MPP:'), QLabel(_('Yes') if run.config.enable_mpp else _('No')))
             form.addRow(_('Success rate:'), QLabel(f'{s["sr"] * 100:.1f}%'))
             form.addRow(_('Avg hops:'), QLabel(f'{s["hops"]:.2f}'))
             form.addRow(_('Avg fee:'), QLabel(f'{s["fee"]:.0f} msat'))
@@ -595,6 +602,7 @@ def _experiment_to_markdown(exp: ExperimentRun) -> str:
         f'| Timestamp | {_fmt_ts(exp.timestamp)} |',
         f'| Electrum | {exp.electrum_version} |',
         f'| Amount | {exp.config.amount_msat // 1000} sat |',
+        f'| MPP | {"Yes" if exp.config.enable_mpp else "No"} |',
         f'| Targets | {len(exp.config.target_pubkeys_hex)} |',
         f'| Attempts/node | {exp.config.attempts_per_node} |',
         f'| Total probes | {len(exp.results)} |',
@@ -638,6 +646,7 @@ def _comparison_to_markdown(
             f'| Timestamp | {_fmt_ts(run.timestamp)} |',
             f'| Electrum | {run.electrum_version} |',
             f'| Amount | {run.config.amount_msat // 1000} sat |',
+            f'| MPP | {"Yes" if run.config.enable_mpp else "No"} |',
             f'| Targets | {len(run.config.target_pubkeys_hex)} |',
             f'| Total probes | {len(run.results)} |',
             f'| Success rate | {s["sr"] * 100:.1f}% |',

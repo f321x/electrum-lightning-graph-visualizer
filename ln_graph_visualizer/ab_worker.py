@@ -44,6 +44,7 @@ class ProbeWorker(QThread):
         amount_msat: int = 10_000_000,
         attempts_per_node: int = 3,
         timeout_between_ms: int = 500,
+        enable_mpp: bool = False,
     ):
         super().__init__()
         self.lnworker = lnworker
@@ -56,6 +57,7 @@ class ProbeWorker(QThread):
         self.amount_msat = amount_msat
         self.attempts_per_node = attempts_per_node
         self.timeout_between_ms = timeout_between_ms
+        self.enable_mpp = enable_mpp
         self._stop = False
 
     def stop(self):
@@ -100,6 +102,7 @@ class ProbeWorker(QThread):
             attempts_per_node=self.attempts_per_node,
             timeout_between_ms=self.timeout_between_ms,
             source_pubkey_hex=self.own_pubkey.hex() if self.own_pubkey else '',
+            enable_mpp=self.enable_mpp,
         )
 
         self._clear_pathfinder_blacklist()
@@ -116,6 +119,7 @@ class ProbeWorker(QThread):
                         probe_node(
                             self.lnworker, target_pubkey, self.amount_msat,
                             target_alias=target_alias, attempt_number=attempt,
+                            enable_mpp=self.enable_mpp,
                         ),
                         loop,
                     )

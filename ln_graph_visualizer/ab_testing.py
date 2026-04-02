@@ -5,7 +5,8 @@ from dataclasses import dataclass, asdict
 from typing import Optional, TYPE_CHECKING
 
 from electrum.lnonion import OnionFailureCode
-from electrum.lnutil import PaymentFailure, PaymentFeeBudget, NBLOCK_CLTV_DELTA_TOO_FAR_INTO_FUTURE
+from electrum.lnutil import PaymentFailure, PaymentFeeBudget, NBLOCK_CLTV_DELTA_TOO_FAR_INTO_FUTURE, LnFeatures
+from electrum.lnworker import LNWALLET_FEATURES
 from electrum.logging import get_logger
 from electrum import util
 
@@ -41,6 +42,7 @@ class ExperimentConfig:
     attempts_per_node: int
     timeout_between_ms: int
     source_pubkey_hex: str
+    enable_mpp: bool = False
 
 
 @dataclass
@@ -167,7 +169,9 @@ def _run_to_dict(run: ExperimentRun) -> dict:
 
 
 def _run_from_dict(d: dict) -> ExperimentRun:
-    config = ExperimentConfig(**d['config'])
+    cfg = d['config']
+    cfg.setdefault('enable_mpp', False)
+    config = ExperimentConfig(**cfg)
     results = [ProbeResult(**r) for r in d['results']]
     return ExperimentRun(
         run_id=d['run_id'],
@@ -183,12 +187,30 @@ def _run_from_dict(d: dict) -> ExperimentRun:
 
 # --- probing ---
 
+_TRAMPOLINE_BITS = (
+    LnFeatures.OPTION_TRAMPOLINE_ROUTING_OPT_ECLAIR
+    | LnFeatures.OPTION_TRAMPOLINE_ROUTING_REQ_ECLAIR
+    | LnFeatures.OPTION_TRAMPOLINE_ROUTING_OPT_ELECTRUM
+    | LnFeatures.OPTION_TRAMPOLINE_ROUTING_REQ_ELECTRUM
+)
+_MPP_BITS = LnFeatures.BASIC_MPP_OPT | LnFeatures.BASIC_MPP_REQ
+
+
+def _probe_invoice_features(enable_mpp: bool) -> int:
+    features = LNWALLET_FEATURES.for_invoice()
+    features &= ~_TRAMPOLINE_BITS
+    if not enable_mpp:
+        features &= ~_MPP_BITS
+    return int(features)
+
+
 async def probe_node(
     lnworker: 'LNWallet',
     target_pubkey: bytes,
     amount_msat: int,
     target_alias: str = '',
     attempt_number: int = 1,
+    enable_mpp: bool = False,
 ) -> ProbeResult:
     payment_hash = os.urandom(32)
     payment_secret = os.urandom(32)
@@ -207,6 +229,8 @@ async def probe_node(
     route_scids = []
     fee_msat = 0
 
+    invoice_features = _probe_invoice_features(enable_mpp)
+
     try:
         await lnworker.pay_to_node(
             node_pubkey=target_pubkey,
@@ -215,7 +239,7 @@ async def probe_node(
             amount_to_pay=amount_msat,
             min_final_cltv_delta=144,
             r_tags=[],
-            invoice_features=0,
+            invoice_features=invoice_features,
             attempts=1,
             budget=budget,
         )

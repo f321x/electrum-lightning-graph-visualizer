@@ -1,3 +1,4 @@
+import logging
 import time
 import uuid
 import asyncio
@@ -23,12 +24,30 @@ _logger = get_logger(__name__)
 
 PROBE_TIMEOUT_S = 120
 
+_LOG_FORMAT = '%(asctime)s [%(levelname)s] %(name)s - %(message)s'
+
+
+class _LogCaptureHandler(logging.Handler):
+    """Captures formatted log records into a list during an experiment."""
+
+    def __init__(self):
+        super().__init__()
+        self.records: list[str] = []
+        self.setFormatter(logging.Formatter(_LOG_FORMAT))
+
+    def emit(self, record):
+        try:
+            self.records.append(self.format(record))
+        except Exception:
+            pass
+
 
 class ProbeWorker(QThread):
     """Run a series of probes in background, emitting progress signals."""
     probe_completed = pyqtSignal(object)       # ProbeResult
     progress_updated = pyqtSignal(int, int)    # (completed, total)
     experiment_finished = pyqtSignal(object)   # ExperimentRun
+    logs_captured = pyqtSignal(str)            # full log text from experiment
     error_occurred = pyqtSignal(str)
 
     def __init__(
@@ -67,11 +86,17 @@ class ProbeWorker(QThread):
         self.lnworker.network.path_finder.clear_blacklist()
 
     def run(self):
+        log_handler = _LogCaptureHandler()
+        root_logger = logging.getLogger()
+        root_logger.addHandler(log_handler)
         try:
             self._run_experiment()
         except Exception as e:
             _logger.error(f"ProbeWorker error: {e}", exc_info=True)
             self.error_occurred.emit(str(e))
+        finally:
+            root_logger.removeHandler(log_handler)
+            self.logs_captured.emit('\n'.join(log_handler.records))
 
     def _run_experiment(self):
         # resolve targets

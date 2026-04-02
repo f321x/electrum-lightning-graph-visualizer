@@ -47,6 +47,7 @@ class ABTestPanel(QWidget):
         self._probe_worker: Optional[ProbeWorker] = None
         self._loaded_targets: Optional[list] = None  # multi-target pubkey hex list for replay
         self._last_experiment: Optional[ExperimentRun] = None
+        self._captured_logs: Optional[str] = None
         self._setup_ui()
         self._connect_signals()
         self._refresh_experiment_list()
@@ -147,9 +148,16 @@ class ABTestPanel(QWidget):
         self.results_text.setFont(QFont('Monospace', 9))
         self.results_text.setMaximumHeight(200)
         results_layout.addWidget(self.results_text)
+        copy_btn_layout = QHBoxLayout()
         self.copy_md_btn = QPushButton(_('Copy as Markdown'))
         self.copy_md_btn.setEnabled(False)
-        results_layout.addWidget(self.copy_md_btn)
+        copy_btn_layout.addWidget(self.copy_md_btn)
+        self.copy_logs_btn = QPushButton(_('Copy Electrum Logs'))
+        self.copy_logs_btn.setEnabled(False)
+        self.copy_logs_btn.setToolTip(_('Copy all (Electrum) log output captured during the experiment to the clipboard'))
+        copy_btn_layout.addWidget(self.copy_logs_btn)
+        copy_btn_layout.addStretch()
+        results_layout.addLayout(copy_btn_layout)
         layout.addWidget(results_box)
 
         # --- saved experiments ---
@@ -186,6 +194,7 @@ class ABTestPanel(QWidget):
         self.run_btn.clicked.connect(self._on_run)
         self.stop_btn.clicked.connect(self._on_stop)
         self.copy_md_btn.clicked.connect(self._on_copy_markdown)
+        self.copy_logs_btn.clicked.connect(self._on_copy_logs)
         self.compare_btn.clicked.connect(self._on_compare)
         self.load_targets_btn.clicked.connect(self._on_load_targets)
         self.delete_btn.clicked.connect(self._on_delete)
@@ -262,6 +271,8 @@ class ABTestPanel(QWidget):
         self._stop_worker()
 
         self.results_text.clear()
+        self._captured_logs = None
+        self.copy_logs_btn.setEnabled(False)
         self.progress_bar.setValue(0)
         self.progress_bar.setVisible(True)
         self.run_btn.setEnabled(False)
@@ -284,6 +295,7 @@ class ABTestPanel(QWidget):
         self._probe_worker.probe_completed.connect(self._on_probe_completed)
         self._probe_worker.progress_updated.connect(self._on_progress_updated)
         self._probe_worker.experiment_finished.connect(self._on_experiment_finished)
+        self._probe_worker.logs_captured.connect(self._on_logs_captured)
         self._probe_worker.error_occurred.connect(self._on_error)
         self._probe_worker.start()
 
@@ -437,6 +449,16 @@ class ABTestPanel(QWidget):
         md = _experiment_to_markdown(self._last_experiment)
         QApplication.clipboard().setText(md)
         self.progress_label.setText(_('Copied to clipboard'))
+
+    def _on_logs_captured(self, logs: str):
+        self._captured_logs = logs
+        self.copy_logs_btn.setEnabled(bool(logs))
+
+    def _on_copy_logs(self):
+        if not self._captured_logs:
+            return
+        QApplication.clipboard().setText(self._captured_logs)
+        self.progress_label.setText(_('Logs copied to clipboard'))
 
     # --- helpers ---
 

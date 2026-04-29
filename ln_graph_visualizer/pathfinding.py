@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import List, Dict, Tuple, Optional, Sequence, TYPE_CHECKING
 
-from electrum.lnaddr import lndecode
+from electrum.bolt11 import decode_bolt11_invoice
 from electrum.lnrouter import LNPathFinder, RouteEdge
 from electrum.lnutil import ShortChannelID
 
@@ -69,7 +69,7 @@ def parse_invoice_for_routing(
     channel_db: 'ChannelDB',
 ) -> InvoiceRoutingContext:
     """Parse a BOLT11 invoice and extract routing-relevant data."""
-    lnaddr = lndecode(bolt11_str)
+    lnaddr = decode_bolt11_invoice(bolt11_str)
     destination = lnaddr.pubkey.serialize()
     amount_msat = lnaddr.get_amount_msat()
     if amount_msat is None:

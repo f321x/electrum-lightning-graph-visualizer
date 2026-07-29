@@ -1,10 +1,10 @@
 {
   "name": "ln_graph_visualizer",
   "fullname": "LN Graph Visualizer",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "Visualize the Lightning Network graph from gossip data. Inspect nodes, channels, and debug pathfinding. A/B testing.",
   "author": "f321x",
   "available_for": ["qt"],
   "icon": "ln_graph.png",
-  "min_electrum_version": "4.7.3"
+  "min_electrum_version": "4.8.0"
 }

@@ -197,7 +197,7 @@ _MPP_BITS = LnFeatures.BASIC_MPP_OPT | LnFeatures.BASIC_MPP_REQ
 
 
 def _probe_invoice_features(enable_mpp: bool) -> int:
-    features = LNWALLET_FEATURES.for_invoice()
+    features = LNWALLET_FEATURES.for_bolt11_invoice()
     features &= ~_TRAMPOLINE_BITS
     if not enable_mpp:
         features &= ~_MPP_BITS
